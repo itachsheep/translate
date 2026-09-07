@@ -17,6 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -34,6 +35,8 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun OverlayPanelContent(
     capturedText: String,
+    isRecognizing: Boolean,
+    recognitionHint: String? = null,
     onRefresh: () -> Unit,
     onClose: () -> Unit,
     onDragStart: () -> Unit = {},
@@ -113,7 +116,24 @@ fun OverlayPanelContent(
 
             HorizontalDivider()
 
-            if (capturedText.isBlank()) {
+            if (isRecognizing) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "正在识别屏幕文字…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            } else if (capturedText.isBlank()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -121,7 +141,7 @@ fun OverlayPanelContent(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = "未识别到文字\n请确保无障碍服务已开启，然后点击刷新",
+                        text = recognitionHint ?: "未识别到文字\n请切换到目标内容后点击刷新",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

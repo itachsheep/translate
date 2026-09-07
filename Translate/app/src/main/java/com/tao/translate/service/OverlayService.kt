@@ -5,7 +5,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
 import android.view.MotionEvent
@@ -27,11 +29,22 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.tao.translate.MainActivity
 import com.tao.translate.R
+import com.tao.translate.capture.ScreenCaptureManager
+import com.tao.translate.capture.TextRecognitionHelper
 import com.tao.translate.data.AppTextRepository
 import com.tao.translate.ui.overlay.FloatingBallContent
 import com.tao.translate.ui.overlay.OverlayPanelContent
 import com.tao.translate.ui.theme.TranslateTheme
 import kotlin.math.abs
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
 
@@ -44,6 +57,11 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
 
     private var panelView: ComposeView? = null
     private var panelLayoutParams: WindowManager.LayoutParams? = null
+
+    private var screenCaptureManager: ScreenCaptureManager? = null
+    private val textRecognitionHelper = TextRecognitionHelper()
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var captureJob: Job? = null
 
     private var screenWidth = 0
     private var screenHeight = 0
@@ -70,7 +88,18 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         ballSizePx = (FLOATING_BALL_SIZE_DP * metrics.density).toInt()
         touchSlop = ViewConfiguration.get(this).scaledTouchSlop
 
-        startForeground(NOTIFICATION_ID, createNotification())
+        val notification = createNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+
         lifecycleRegistry.currentState = Lifecycle.State.STARTED
         showFloatingBall()
     }
@@ -83,6 +112,7 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             }
             ACTION_SHOW_PANEL -> showPanel()
             ACTION_HIDE_PANEL -> hidePanel()
+            else -> initProjectionIfNeeded(intent)
         }
         return START_STICKY
     }
@@ -90,10 +120,35 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        captureJob?.cancel()
         hidePanel()
         removeFloatingBall()
+        screenCaptureManager?.release()
+        textRecognitionHelper.close()
+        serviceScope.cancel()
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         super.onDestroy()
+    }
+
+    private fun initProjectionIfNeeded(intent: Intent?) {
+        val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Int.MIN_VALUE) ?: Int.MIN_VALUE
+        val data = readProjectionData(intent)
+        if (resultCode == Int.MIN_VALUE || data == null) return
+
+        screenCaptureManager?.release()
+        screenCaptureManager = ScreenCaptureManager(this).also {
+            it.init(resultCode, data)
+        }
+    }
+
+    private fun readProjectionData(intent: Intent?): Intent? {
+        if (intent == null) return null
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(EXTRA_RESULT_DATA)
+        }
     }
 
     private fun createNotification(): Notification {
@@ -182,9 +237,11 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
 
     private fun showPanel() {
         if (panelView != null) return
+        performCapture(showPanelOnComplete = true)
+    }
 
-        hideFloatingBall()
-        refreshCapturedText()
+    private fun attachPanel() {
+        if (panelView != null) return
 
         val panelHeight = screenHeight / 2
         val params = overlayLayoutParams(
@@ -202,8 +259,12 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             setContent {
                 TranslateTheme {
                     val capturedText by AppTextRepository.capturedText.collectAsState()
+                    val isRecognizing by AppTextRepository.isRecognizing.collectAsState()
+                    val recognitionHint by AppTextRepository.recognitionHint.collectAsState()
                     OverlayPanelContent(
                         capturedText = capturedText,
+                        isRecognizing = isRecognizing,
+                        recognitionHint = recognitionHint,
                         onRefresh = { refreshCapturedText() },
                         onClose = { hidePanel() },
                         onDragStart = { normalizePanelPosition(params) },
@@ -220,15 +281,69 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
     }
 
     private fun hidePanel() {
+        captureJob?.cancel()
         panelView?.let { windowManager.removeView(it) }
         panelView = null
         panelLayoutParams = null
         AppTextRepository.setOverlayVisible(false)
+        AppTextRepository.setRecognizing(false)
         revealFloatingBall()
     }
 
     private fun refreshCapturedText() {
-        TranslateAccessibilityService.captureText()
+        performCapture(panelAlreadyVisible = true)
+    }
+
+    private fun performCapture(
+        showPanelOnComplete: Boolean = false,
+        panelAlreadyVisible: Boolean = false,
+    ) {
+        if (captureJob?.isActive == true) return
+
+        captureJob = serviceScope.launch {
+            AppTextRepository.setRecognizing(true)
+            AppTextRepository.setRecognitionHint(null)
+            hideFloatingBall()
+            if (panelAlreadyVisible) {
+                panelView?.visibility = View.GONE
+            }
+            delay(CAPTURE_DELAY_MS)
+
+            try {
+                val text = captureTextFromScreen()
+                AppTextRepository.updateCapturedText(text)
+                if (text.isBlank()) {
+                    AppTextRepository.setRecognitionHint("未识别到文字，请确认目标内容清晰可见后点击刷新")
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                AppTextRepository.updateCapturedText("")
+                AppTextRepository.setRecognitionHint(error.message ?: "识别失败，请重试")
+            } finally {
+                AppTextRepository.setRecognizing(false)
+                when {
+                    showPanelOnComplete -> attachPanel()
+                    panelAlreadyVisible -> panelView?.visibility = View.VISIBLE
+                    else -> revealFloatingBall()
+                }
+            }
+        }
+    }
+
+    private suspend fun captureTextFromScreen(): String {
+        val manager = screenCaptureManager
+        if (manager == null || !manager.isReady()) {
+            throw IllegalStateException("录屏权限未就绪")
+        }
+        val bitmap = withContext(Dispatchers.IO) { manager.captureScreen() }
+        return try {
+            withContext(Dispatchers.IO) { textRecognitionHelper.recognize(bitmap) }
+        } finally {
+            if (!bitmap.isRecycled) {
+                bitmap.recycle()
+            }
+        }
     }
 
     private fun normalizePanelPosition(params: WindowManager.LayoutParams) {
@@ -325,13 +440,20 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         private const val CHANNEL_ID = "overlay_service"
         private const val NOTIFICATION_ID = 1001
         private const val FLOATING_BALL_SIZE_DP = 52f
+        private const val CAPTURE_DELAY_MS = 300L
+
+        const val EXTRA_RESULT_CODE = "extra_result_code"
+        const val EXTRA_RESULT_DATA = "extra_result_data"
 
         const val ACTION_STOP = "com.tao.translate.action.STOP_OVERLAY"
         const val ACTION_SHOW_PANEL = "com.tao.translate.action.SHOW_PANEL"
         const val ACTION_HIDE_PANEL = "com.tao.translate.action.HIDE_PANEL"
 
-        fun start(context: Context) {
-            val intent = Intent(context, OverlayService::class.java)
+        fun start(context: Context, resultCode: Int, data: Intent) {
+            val intent = Intent(context, OverlayService::class.java).apply {
+                putExtra(EXTRA_RESULT_CODE, resultCode)
+                putExtra(EXTRA_RESULT_DATA, data)
+            }
             context.startForegroundService(intent)
         }
 
@@ -343,7 +465,7 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         }
 
         fun createNotificationChannel(context: Context) {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = android.app.NotificationChannel(
                     CHANNEL_ID,
                     context.getString(R.string.overlay_notification_channel),

@@ -1,7 +1,15 @@
 <resources>
     <string name="app_name">Translate</string>
-    <string name="accessibility_service_description">读取当前屏幕上的文字，用于屏幕翻译功能。不会收集或上传您的个人数据。</string>
     <string name="overlay_notification_channel">悬浮翻译服务</string>
     <string name="overlay_notification_title">屏幕翻译运行中</string>
-    <string name="overlay_notification_text">点击悬浮圆球展开翻译面板</string>
+    <string name="overlay_notification_text">点击悬浮圆球识别屏幕文字</string>
+
+    <string name="screen_capture_card_title">截图权限说明</string>
+    <string name="screen_capture_card_description">仅在你点击悬浮圆球时截取当前屏幕，用于识别文字并翻译。不会录制视频，不会保存到相册。</string>
+
+    <string name="screen_capture_dialog_title">关于截图权限</string>
+    <string name="screen_capture_dialog_message">接下来系统会弹出授权窗口，文案可能显示「录制或投射内容」——这是 Android 的统一提示，并非本应用要录屏。\n\n我们只会截取屏幕画面来识别文字，用于翻译。不会录制视频，不会后台持续录屏，也不会上传你的屏幕内容。</string>
+    <string name="screen_capture_dialog_note">只有你主动点击悬浮圆球时才会截图，平时不会截取任何内容。</string>
+    <string name="screen_capture_dialog_confirm">我知道了，继续授权</string>
+    <string name="screen_capture_dialog_cancel">取消</string>
 </resources>

@@ -19,14 +19,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.tao.translate.R
 
 @Composable
 fun MainScreen(
-    isAccessibilityEnabled: Boolean,
     isOverlayGranted: Boolean,
     isServiceRunning: Boolean,
-    onOpenAccessibilitySettings: () -> Unit,
     onOpenOverlaySettings: () -> Unit,
     onStartService: () -> Unit,
     onStopService: () -> Unit,
@@ -43,34 +43,49 @@ fun MainScreen(
             style = MaterialTheme.typography.headlineMedium,
         )
         Text(
-            text = "从屏幕侧边唤出可拖动的悬浮圆球，点击展开半屏翻译面板，自动识别当前 App 文字。",
+            text = "通过截图识别屏幕文字并翻译。点击悬浮圆球时才会截取当前屏幕，不会录制视频。",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
         PermissionCard(
-            title = "无障碍服务",
-            description = if (isAccessibilityEnabled) "已开启，可读取前台 App 文字" else "未开启，请前往系统设置授权",
-            isGranted = isAccessibilityEnabled,
-            buttonText = if (isAccessibilityEnabled) "已开启" else "去开启",
-            onClick = onOpenAccessibilitySettings,
-            enabled = !isAccessibilityEnabled,
-        )
-
-        PermissionCard(
             title = "悬浮窗权限",
-            description = if (isOverlayGranted) "已授权，可显示悬浮面板" else "未授权，请允许显示在其他应用上层",
+            description = if (isOverlayGranted) "已授权，可显示悬浮圆球和翻译面板" else "未授权，请允许显示在其他应用上层",
             isGranted = isOverlayGranted,
             buttonText = if (isOverlayGranted) "已授权" else "去授权",
             onClick = onOpenOverlaySettings,
             enabled = !isOverlayGranted,
         )
 
-        val canStart = isAccessibilityEnabled && isOverlayGranted
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+            ),
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = stringResource(R.string.screen_capture_card_title),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.screen_capture_card_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "系统弹窗可能显示「录制或投射」，这是 Android 统一提示，实际仅为截图识别，请放心授权。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
 
         Button(
             onClick = onStartService,
-            enabled = canStart && !isServiceRunning,
+            enabled = isOverlayGranted && !isServiceRunning,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("启动悬浮服务")
@@ -98,7 +113,7 @@ fun MainScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "切换到任意 App，点击悬浮圆球展开翻译面板，拖动圆球可移动位置。关闭面板后圆球会重新出现。",
+                        text = "切换到任意 App，点击悬浮圆球即可截图识别文字。拖动圆球可移动位置，面板内可点击刷新重新识别。",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
