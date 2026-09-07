@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Translate</string>
+    <string name="accessibility_service_description">读取当前屏幕上的文字，用于屏幕翻译功能。不会收集或上传您的个人数据。</string>
+    <string name="overlay_notification_channel">悬浮翻译服务</string>
+    <string name="overlay_notification_title">屏幕翻译运行中</string>
+    <string name="overlay_notification_text">点击悬浮圆球展开翻译面板</string>
+</resources>
