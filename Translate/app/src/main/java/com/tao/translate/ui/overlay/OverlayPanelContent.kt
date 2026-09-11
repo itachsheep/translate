@@ -33,17 +33,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.tao.translate.translation.SentenceTranslation
 import com.tao.translate.translation.TranslationDirection
 import com.tao.translate.translation.TranslationEngineType
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OverlayPanelContent(
-    capturedText: String,
-    translatedText: String,
+    sentenceTranslations: List<SentenceTranslation>,
     isRecognizing: Boolean,
     isTranslating: Boolean,
     translationDirection: TranslationDirection,
@@ -64,6 +63,8 @@ fun OverlayPanelContent(
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             PanelHeader(
+                translationEngine = translationEngine,
+                isTranslating = isTranslating,
                 onRefresh = onRefresh,
                 onClose = onClose,
                 onDragStart = onDragStart,
@@ -82,14 +83,12 @@ fun OverlayPanelContent(
 
             when {
                 isRecognizing -> LoadingState("正在识别屏幕文字…")
-                capturedText.isBlank() -> EmptyState(
+                sentenceTranslations.isEmpty() -> EmptyState(
                     recognitionHint ?: "未识别到文字\n请切换到目标内容后点击刷新",
                 )
-                else -> TranslationContent(
-                    capturedText = capturedText,
-                    translatedText = translatedText,
+                else -> SentenceListContent(
+                    sentenceTranslations = sentenceTranslations,
                     isTranslating = isTranslating,
-                    translationEngine = translationEngine,
                     translationHint = translationHint,
                 )
             }
@@ -99,6 +98,8 @@ fun OverlayPanelContent(
 
 @Composable
 private fun PanelHeader(
+    translationEngine: TranslationEngineType?,
+    isTranslating: Boolean,
     onRefresh: () -> Unit,
     onClose: () -> Unit,
     onDragStart: () -> Unit,
@@ -113,25 +114,23 @@ private fun PanelHeader(
     ) {
         DragHandle(onDragStart = onDragStart, onDrag = onDrag)
         Spacer(modifier = Modifier.width(12.dp))
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDragStart = { onDragStart() },
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            onDrag(dragAmount.x, dragAmount.y)
-                        },
-                    )
-                },
-        ) {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = "屏幕翻译",
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (translationEngine != null && !isTranslating) {
+                Text(
+                    text = when (translationEngine) {
+                        TranslationEngineType.GOOGLE_CLOUD -> "云端翻译"
+                        TranslationEngineType.ML_KIT -> "本地翻译"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         IconButton(onClick = onRefresh) {
             Icon(Icons.Default.Refresh, contentDescription = "刷新")
@@ -244,76 +243,81 @@ private fun EmptyState(message: String) {
 }
 
 @Composable
-private fun TranslationContent(
-    capturedText: String,
-    translatedText: String,
+private fun SentenceListContent(
+    sentenceTranslations: List<SentenceTranslation>,
     isTranslating: Boolean,
-    translationEngine: TranslationEngineType?,
     translationHint: String?,
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        Text(
-            text = "原文",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Text(
-            text = capturedText,
-            style = MaterialTheme.typography.bodyMedium,
-        )
-
-        HorizontalDivider()
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "译文",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold,
+        sentenceTranslations.forEach { item ->
+            SentencePairCard(
+                original = item.original,
+                translated = item.translated,
+                isTranslating = isTranslating && item.translated.isBlank(),
             )
-            if (translationEngine != null && !isTranslating) {
-                Text(
-                    text = when (translationEngine) {
-                        TranslationEngineType.GOOGLE_CLOUD -> "云端翻译"
-                        TranslationEngineType.ML_KIT -> "本地翻译"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
 
         if (isTranslating) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp)
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .width(18.dp)
+                        .height(18.dp),
+                    strokeWidth = 2.dp,
+                )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "正在翻译…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else if (translationHint != null && sentenceTranslations.all { it.translated.isBlank() }) {
+            Text(
+                text = translationHint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SentencePairCard(
+    original: String,
+    translated: String,
+    isTranslating: Boolean,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = original,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+
+        when {
+            isTranslating -> {
+                Text(
+                    text = "翻译中…",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        } else if (translatedText.isNotBlank()) {
-            Text(
-                text = translatedText,
-                style = MaterialTheme.typography.bodyLarge,
-            )
-        } else {
-            Text(
-                text = translationHint ?: "翻译失败，请切换方向后重试",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+
+            translated.isNotBlank() -> {
+                Text(
+                    text = translated,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            }
         }
     }
 }

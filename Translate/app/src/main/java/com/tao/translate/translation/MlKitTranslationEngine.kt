@@ -5,6 +5,9 @@ import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.tasks.await
 
 class MlKitTranslationEngine {
@@ -12,10 +15,25 @@ class MlKitTranslationEngine {
     private val translators = mutableMapOf<Pair<String, String>, Translator>()
 
     suspend fun translate(text: String, sourceLanguage: String, targetLanguage: String): String {
+        return translateBatch(listOf(text), sourceLanguage, targetLanguage).first()
+    }
+
+    suspend fun translateBatch(
+        texts: List<String>,
+        sourceLanguage: String,
+        targetLanguage: String,
+    ): List<String> {
+        if (texts.isEmpty()) return emptyList()
+
         val translator = getTranslator(sourceLanguage, targetLanguage)
         val conditions = DownloadConditions.Builder().build()
         translator.downloadModelIfNeeded(conditions).await()
-        return translator.translate(text).await()
+
+        return coroutineScope {
+            texts.map { text ->
+                async { translator.translate(text).await() }
+            }.awaitAll()
+        }
     }
 
     fun close() {

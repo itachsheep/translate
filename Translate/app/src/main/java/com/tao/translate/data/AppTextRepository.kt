@@ -1,5 +1,6 @@
 package com.tao.translate.data
 
+import com.tao.translate.translation.SentenceTranslation
 import com.tao.translate.translation.TranslationDirection
 import com.tao.translate.translation.TranslationEngineType
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -7,11 +8,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 object AppTextRepository {
-    private val _capturedText = MutableStateFlow("")
-    val capturedText: StateFlow<String> = _capturedText.asStateFlow()
-
-    private val _translatedText = MutableStateFlow("")
-    val translatedText: StateFlow<String> = _translatedText.asStateFlow()
+    private val _sentenceTranslations = MutableStateFlow<List<SentenceTranslation>>(emptyList())
+    val sentenceTranslations: StateFlow<List<SentenceTranslation>> = _sentenceTranslations.asStateFlow()
 
     private val _translationDirection = MutableStateFlow(TranslationDirection.AUTO)
     val translationDirection: StateFlow<TranslationDirection> = _translationDirection.asStateFlow()
@@ -34,12 +32,8 @@ object AppTextRepository {
     private val _translationHint = MutableStateFlow<String?>(null)
     val translationHint: StateFlow<String?> = _translationHint.asStateFlow()
 
-    fun updateCapturedText(text: String) {
-        _capturedText.value = text
-    }
-
-    fun updateTranslatedText(text: String) {
-        _translatedText.value = text
+    fun updateSentenceTranslations(sentences: List<SentenceTranslation>) {
+        _sentenceTranslations.value = sentences
     }
 
     fun setTranslationDirection(direction: TranslationDirection) {
@@ -71,7 +65,7 @@ object AppTextRepository {
     }
 
     fun clearTranslation() {
-        _translatedText.value = ""
+        _sentenceTranslations.value = emptyList()
         _translationEngine.value = null
         _translationHint.value = null
     }

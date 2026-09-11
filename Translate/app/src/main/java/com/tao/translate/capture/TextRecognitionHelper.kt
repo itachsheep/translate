@@ -15,15 +15,17 @@ class TextRecognitionHelper {
         ChineseTextRecognizerOptions.Builder().build(),
     )
 
-    suspend fun recognize(bitmap: Bitmap): String {
+    suspend fun recognize(bitmap: Bitmap): RecognitionResult {
         val processed = BitmapPreprocessor.prepare(bitmap)
-        val result = coroutineScope {
+        val lines = coroutineScope {
             val latinDeferred = async { recognizeLatin(processed) }
             val chineseDeferred = async { recognizeChinese(processed) }
-            TextPostProcessor.mergeAndClean(latinDeferred.await(), chineseDeferred.await())
+            TextPostProcessor.mergeLines(latinDeferred.await(), chineseDeferred.await())
         }
         processed.recycle()
-        return result
+
+        val sentences = SentenceGrouper.group(lines)
+        return RecognitionResult(sentences = sentences)
     }
 
     private suspend fun recognizeLatin(bitmap: Bitmap): List<RecognizedLine> {

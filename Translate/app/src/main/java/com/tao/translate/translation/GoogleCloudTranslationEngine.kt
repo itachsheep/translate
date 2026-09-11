@@ -6,6 +6,7 @@ import java.net.URL
 import java.net.URLEncoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 
 class GoogleCloudTranslationEngine {
@@ -13,6 +14,16 @@ class GoogleCloudTranslationEngine {
     fun isAvailable(): Boolean = BuildConfig.GOOGLE_TRANSLATE_API_KEY.isNotBlank()
 
     suspend fun translate(text: String, sourceLanguage: String, targetLanguage: String): String {
+        return translateBatch(listOf(text), sourceLanguage, targetLanguage).first()
+    }
+
+    suspend fun translateBatch(
+        texts: List<String>,
+        sourceLanguage: String,
+        targetLanguage: String,
+    ): List<String> {
+        if (texts.isEmpty()) return emptyList()
+
         val apiKey = BuildConfig.GOOGLE_TRANSLATE_API_KEY
         if (apiKey.isBlank()) {
             throw IllegalStateException("未配置 Google 翻译 API Key")
@@ -24,7 +35,7 @@ class GoogleCloudTranslationEngine {
                     URLEncoder.encode(apiKey, Charsets.UTF_8.name())
 
             val requestBody = JSONObject().apply {
-                put("q", text)
+                put("q", JSONArray(texts))
                 put("source", sourceLanguage)
                 put("target", toGoogleTargetLanguage(targetLanguage))
                 put("format", "text")
@@ -32,8 +43,8 @@ class GoogleCloudTranslationEngine {
 
             val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 15_000
-                readTimeout = 15_000
+                connectTimeout = 20_000
+                readTimeout = 20_000
                 doInput = true
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
@@ -56,9 +67,15 @@ class GoogleCloudTranslationEngine {
                     throw IllegalStateException(parseErrorMessage(body))
                 }
 
-                val json = JSONObject(body)
-                val translations = json.getJSONObject("data").getJSONArray("translations")
-                translations.getJSONObject(0).getString("translatedText")
+                val translations = JSONObject(body)
+                    .getJSONObject("data")
+                    .getJSONArray("translations")
+
+                buildList {
+                    for (index in 0 until translations.length()) {
+                        add(translations.getJSONObject(index).getString("translatedText"))
+                    }
+                }
             } finally {
                 connection.disconnect()
             }

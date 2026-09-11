@@ -4,11 +4,22 @@ class TranslationRepository {
     private val cloudEngine = GoogleCloudTranslationEngine()
     private val localEngine = MlKitTranslationEngine()
 
-    suspend fun translate(
-        text: String,
+    suspend fun translateSentences(
+        sentences: List<String>,
         requestedDirection: TranslationDirection,
-    ): TranslationResult {
-        val direction = LanguageDetector.resolveDirection(text, requestedDirection)
+    ): TranslationBatchResult {
+        if (sentences.isEmpty()) {
+            return TranslationBatchResult(
+                sentences = emptyList(),
+                direction = requestedDirection,
+                sourceLanguage = "en",
+                targetLanguage = "zh",
+                engine = TranslationEngineType.ML_KIT,
+            )
+        }
+
+        val combinedText = sentences.joinToString("\n")
+        val direction = LanguageDetector.resolveDirection(combinedText, requestedDirection)
         val (sourceLanguage, targetLanguage) = when (direction) {
             TranslationDirection.EN_TO_ZH -> "en" to "zh"
             TranslationDirection.ZH_TO_EN -> "zh" to "en"
@@ -17,24 +28,50 @@ class TranslationRepository {
 
         if (cloudEngine.isAvailable()) {
             runCatching {
-                val translated = cloudEngine.translate(text, sourceLanguage, targetLanguage)
-                return TranslationResult(
-                    text = translated,
-                    direction = direction,
-                    sourceLanguage = sourceLanguage,
-                    targetLanguage = targetLanguage,
-                    engine = TranslationEngineType.GOOGLE_CLOUD,
-                )
+                val translated = cloudEngine.translateBatch(sentences, sourceLanguage, targetLanguage)
+                return buildBatchResult(sentences, translated, direction, sourceLanguage, targetLanguage, TranslationEngineType.GOOGLE_CLOUD)
             }
         }
 
-        val translated = localEngine.translate(text, sourceLanguage, targetLanguage)
+        val translated = localEngine.translateBatch(sentences, sourceLanguage, targetLanguage)
+        return buildBatchResult(sentences, translated, direction, sourceLanguage, targetLanguage, TranslationEngineType.ML_KIT)
+    }
+
+    suspend fun translate(
+        text: String,
+        requestedDirection: TranslationDirection,
+    ): TranslationResult {
+        val batch = translateSentences(listOf(text), requestedDirection)
+        val translated = batch.sentences.firstOrNull()?.translated ?: ""
         return TranslationResult(
             text = translated,
+            direction = batch.direction,
+            sourceLanguage = batch.sourceLanguage,
+            targetLanguage = batch.targetLanguage,
+            engine = batch.engine,
+        )
+    }
+
+    private fun buildBatchResult(
+        originals: List<String>,
+        translated: List<String>,
+        direction: TranslationDirection,
+        sourceLanguage: String,
+        targetLanguage: String,
+        engine: TranslationEngineType,
+    ): TranslationBatchResult {
+        val pairs = originals.mapIndexed { index, original ->
+            SentenceTranslation(
+                original = original,
+                translated = translated.getOrElse(index) { "" },
+            )
+        }
+        return TranslationBatchResult(
+            sentences = pairs,
             direction = direction,
             sourceLanguage = sourceLanguage,
             targetLanguage = targetLanguage,
-            engine = TranslationEngineType.ML_KIT,
+            engine = engine,
         )
     }
 

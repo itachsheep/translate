@@ -29,9 +29,11 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.tao.translate.MainActivity
 import com.tao.translate.R
+import com.tao.translate.capture.RecognitionResult
 import com.tao.translate.capture.ScreenCaptureManager
 import com.tao.translate.capture.TextRecognitionHelper
 import com.tao.translate.data.AppTextRepository
+import com.tao.translate.translation.SentenceTranslation
 import com.tao.translate.translation.TranslationDirection
 import com.tao.translate.translation.TranslationRepository
 import com.tao.translate.ui.overlay.FloatingBallContent
@@ -262,8 +264,7 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             setViewTreeSavedStateRegistryOwner(this@OverlayService)
             setContent {
                 TranslateTheme {
-                    val capturedText by AppTextRepository.capturedText.collectAsState()
-                    val translatedText by AppTextRepository.translatedText.collectAsState()
+                    val sentenceTranslations by AppTextRepository.sentenceTranslations.collectAsState()
                     val isRecognizing by AppTextRepository.isRecognizing.collectAsState()
                     val isTranslating by AppTextRepository.isTranslating.collectAsState()
                     val translationDirection by AppTextRepository.translationDirection.collectAsState()
@@ -271,8 +272,7 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
                     val recognitionHint by AppTextRepository.recognitionHint.collectAsState()
                     val translationHint by AppTextRepository.translationHint.collectAsState()
                     OverlayPanelContent(
-                        capturedText = capturedText,
-                        translatedText = translatedText,
+                        sentenceTranslations = sentenceTranslations,
                         isRecognizing = isRecognizing,
                         isTranslating = isTranslating,
                         translationDirection = translationDirection,
@@ -330,22 +330,25 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             delay(CAPTURE_DELAY_MS)
 
             try {
-                val text = captureTextFromScreen()
-                AppTextRepository.updateCapturedText(text)
-                if (text.isBlank()) {
+                val recognition = captureTextFromScreen()
+                if (recognition.sentences.isEmpty()) {
                     AppTextRepository.clearTranslation()
                     AppTextRepository.setRecognitionHint("未识别到文字，请确认目标内容清晰可见后点击刷新")
                 } else {
                     AppTextRepository.setRecognitionHint(null)
+                    AppTextRepository.updateSentenceTranslations(
+                        recognition.sentences.map { sentence ->
+                            SentenceTranslation(original = sentence, translated = "")
+                        },
+                    )
                     if (showPanelOnComplete) {
                         attachPanel()
                     }
-                    translateCapturedText(text)
+                    translateCapturedSentences(recognition.sentences)
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                AppTextRepository.updateCapturedText("")
                 AppTextRepository.clearTranslation()
                 AppTextRepository.setRecognitionHint(error.message ?: "识别失败，请重试")
             } finally {
@@ -360,27 +363,29 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
     }
 
     private fun retranslateCurrentText() {
-        val text = AppTextRepository.capturedText.value
-        if (text.isBlank()) return
+        val sentences = AppTextRepository.sentenceTranslations.value.map { it.original }
+        if (sentences.isEmpty()) return
         serviceScope.launch {
-            translateCapturedText(text)
+            translateCapturedSentences(sentences)
         }
     }
 
-    private suspend fun translateCapturedText(text: String) {
+    private suspend fun translateCapturedSentences(sentences: List<String>) {
         AppTextRepository.setTranslating(true)
         AppTextRepository.setTranslationHint(null)
         try {
-            val result = translationRepository.translate(
-                text = text,
+            val result = translationRepository.translateSentences(
+                sentences = sentences,
                 requestedDirection = AppTextRepository.translationDirection.value,
             )
-            AppTextRepository.updateTranslatedText(result.text)
+            AppTextRepository.updateSentenceTranslations(result.sentences)
             AppTextRepository.setTranslationEngine(result.engine)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            AppTextRepository.updateTranslatedText("")
+            AppTextRepository.updateSentenceTranslations(
+                sentences.map { SentenceTranslation(original = it, translated = "") },
+            )
             AppTextRepository.setTranslationEngine(null)
             AppTextRepository.setTranslationHint(error.message ?: "翻译失败，请重试")
         } finally {
@@ -388,7 +393,7 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         }
     }
 
-    private suspend fun captureTextFromScreen(): String {
+    private suspend fun captureTextFromScreen(): RecognitionResult {
         val manager = screenCaptureManager
         if (manager == null || !manager.isReady()) {
             throw IllegalStateException("录屏权限未就绪")

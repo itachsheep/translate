@@ -6,8 +6,12 @@ data class RecognizedLine(
     val text: String,
     val top: Int,
     val left: Int,
+    val bottom: Int,
+    val right: Int,
     val confidence: Float,
-)
+) {
+    val height: Int get() = (bottom - top).coerceAtLeast(0)
+}
 
 object TextPostProcessor {
 
@@ -18,18 +22,21 @@ object TextPostProcessor {
             block.lines.mapNotNull { line ->
                 val text = line.text.trim()
                 if (text.isEmpty()) return@mapNotNull null
+                val box = line.boundingBox
 
                 RecognizedLine(
                     text = text,
-                    top = line.boundingBox?.top ?: 0,
-                    left = line.boundingBox?.left ?: 0,
+                    top = box?.top ?: 0,
+                    left = box?.left ?: 0,
+                    bottom = box?.bottom ?: ((box?.top ?: 0) + 32),
+                    right = box?.right ?: 0,
                     confidence = line.confidence ?: 1f,
                 )
             }
         }
     }
 
-    fun mergeAndClean(latinLines: List<RecognizedLine>, chineseLines: List<RecognizedLine>): String {
+    fun mergeLines(latinLines: List<RecognizedLine>, chineseLines: List<RecognizedLine>): List<RecognizedLine> {
         val latinCjkCount = latinLines.sumOf { countCjk(it.text) }
         val chineseCjkCount = chineseLines.sumOf { countCjk(it.text) }
 
@@ -40,13 +47,13 @@ object TextPostProcessor {
         }
 
         val secondaryLines = if (primaryLines === chineseLines) latinLines else chineseLines
+        val merged = linkedSetOf<RecognizedLine>()
 
-        val merged = linkedSetOf<String>()
         primaryLines
             .sortedWith(compareBy({ it.top }, { it.left }))
             .forEach { line ->
                 if (isAcceptableLine(line)) {
-                    merged.add(line.text)
+                    merged.add(line)
                 }
             }
 
@@ -54,12 +61,12 @@ object TextPostProcessor {
             .sortedWith(compareBy({ it.top }, { it.left }))
             .forEach { line ->
                 if (!isAcceptableLine(line)) return@forEach
-                if (countCjk(line.text) > 0 || !hasSimilarLine(line.text, merged)) {
-                    merged.add(line.text)
+                if (countCjk(line.text) > 0 || !hasSimilarLine(line, merged)) {
+                    merged.add(line)
                 }
             }
 
-        return merged.joinToString(separator = "\n")
+        return merged.sortedWith(compareBy({ it.top }, { it.left }))
     }
 
     private fun isAcceptableLine(line: RecognizedLine): Boolean {
@@ -89,9 +96,11 @@ object TextPostProcessor {
         return false
     }
 
-    private fun hasSimilarLine(candidate: String, existing: Set<String>): Boolean {
-        val normalizedCandidate = normalize(candidate)
-        return existing.any { normalize(it) == normalizedCandidate || isFuzzyDuplicate(candidate, it) }
+    private fun hasSimilarLine(candidate: RecognizedLine, existing: Set<RecognizedLine>): Boolean {
+        return existing.any { line ->
+            normalize(line.text) == normalize(candidate.text) ||
+                isFuzzyDuplicate(candidate.text, line.text)
+        }
     }
 
     private fun isFuzzyDuplicate(a: String, b: String): Boolean {
