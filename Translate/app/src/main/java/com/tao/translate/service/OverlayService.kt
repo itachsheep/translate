@@ -32,6 +32,8 @@ import com.tao.translate.R
 import com.tao.translate.capture.ScreenCaptureManager
 import com.tao.translate.capture.TextRecognitionHelper
 import com.tao.translate.data.AppTextRepository
+import com.tao.translate.translation.TranslationDirection
+import com.tao.translate.translation.TranslationRepository
 import com.tao.translate.ui.overlay.FloatingBallContent
 import com.tao.translate.ui.overlay.OverlayPanelContent
 import com.tao.translate.ui.theme.TranslateTheme
@@ -60,6 +62,7 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
 
     private var screenCaptureManager: ScreenCaptureManager? = null
     private val textRecognitionHelper = TextRecognitionHelper()
+    private val translationRepository = TranslationRepository()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var captureJob: Job? = null
 
@@ -125,6 +128,7 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         removeFloatingBall()
         screenCaptureManager?.release()
         textRecognitionHelper.close()
+        translationRepository.close()
         serviceScope.cancel()
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         super.onDestroy()
@@ -259,14 +263,28 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             setContent {
                 TranslateTheme {
                     val capturedText by AppTextRepository.capturedText.collectAsState()
+                    val translatedText by AppTextRepository.translatedText.collectAsState()
                     val isRecognizing by AppTextRepository.isRecognizing.collectAsState()
+                    val isTranslating by AppTextRepository.isTranslating.collectAsState()
+                    val translationDirection by AppTextRepository.translationDirection.collectAsState()
+                    val translationEngine by AppTextRepository.translationEngine.collectAsState()
                     val recognitionHint by AppTextRepository.recognitionHint.collectAsState()
+                    val translationHint by AppTextRepository.translationHint.collectAsState()
                     OverlayPanelContent(
                         capturedText = capturedText,
+                        translatedText = translatedText,
                         isRecognizing = isRecognizing,
+                        isTranslating = isTranslating,
+                        translationDirection = translationDirection,
+                        translationEngine = translationEngine,
                         recognitionHint = recognitionHint,
+                        translationHint = translationHint,
                         onRefresh = { refreshCapturedText() },
                         onClose = { hidePanel() },
+                        onDirectionChange = { direction ->
+                            AppTextRepository.setTranslationDirection(direction)
+                            retranslateCurrentText()
+                        },
                         onDragStart = { normalizePanelPosition(params) },
                         onDrag = { dx, dy -> movePanel(composeView, params, dx, dy) },
                     )
@@ -287,6 +305,8 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         panelLayoutParams = null
         AppTextRepository.setOverlayVisible(false)
         AppTextRepository.setRecognizing(false)
+        AppTextRepository.setTranslating(false)
+        AppTextRepository.clearTranslation()
         revealFloatingBall()
     }
 
@@ -313,21 +333,58 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
                 val text = captureTextFromScreen()
                 AppTextRepository.updateCapturedText(text)
                 if (text.isBlank()) {
+                    AppTextRepository.clearTranslation()
                     AppTextRepository.setRecognitionHint("未识别到文字，请确认目标内容清晰可见后点击刷新")
+                } else {
+                    AppTextRepository.setRecognitionHint(null)
+                    if (showPanelOnComplete) {
+                        attachPanel()
+                    }
+                    translateCapturedText(text)
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 AppTextRepository.updateCapturedText("")
+                AppTextRepository.clearTranslation()
                 AppTextRepository.setRecognitionHint(error.message ?: "识别失败，请重试")
             } finally {
                 AppTextRepository.setRecognizing(false)
                 when {
-                    showPanelOnComplete -> attachPanel()
+                    showPanelOnComplete && panelView == null -> attachPanel()
                     panelAlreadyVisible -> panelView?.visibility = View.VISIBLE
                     else -> revealFloatingBall()
                 }
             }
+        }
+    }
+
+    private fun retranslateCurrentText() {
+        val text = AppTextRepository.capturedText.value
+        if (text.isBlank()) return
+        serviceScope.launch {
+            translateCapturedText(text)
+        }
+    }
+
+    private suspend fun translateCapturedText(text: String) {
+        AppTextRepository.setTranslating(true)
+        AppTextRepository.setTranslationHint(null)
+        try {
+            val result = translationRepository.translate(
+                text = text,
+                requestedDirection = AppTextRepository.translationDirection.value,
+            )
+            AppTextRepository.updateTranslatedText(result.text)
+            AppTextRepository.setTranslationEngine(result.engine)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            AppTextRepository.updateTranslatedText("")
+            AppTextRepository.setTranslationEngine(null)
+            AppTextRepository.setTranslationHint(error.message ?: "翻译失败，请重试")
+        } finally {
+            AppTextRepository.setTranslating(false)
         }
     }
 

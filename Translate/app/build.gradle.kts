@@ -3,6 +3,15 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+import java.util.Properties
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { load(it) }
+    }
+}
+
 android {
     namespace = "com.tao.translate"
     compileSdk {
@@ -17,6 +26,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField(
+            "String",
+            "GOOGLE_TRANSLATE_API_KEY",
+            "\"${localProperties.getProperty("GOOGLE_TRANSLATE_API_KEY", "")}\"",
+        )
     }
 
     buildTypes {
@@ -32,6 +47,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -49,6 +65,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.mlkit.text.recognition)
     implementation(libs.mlkit.text.recognition.chinese)
+    implementation(libs.mlkit.translate)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
